@@ -7,6 +7,7 @@ interface Node {
     id: string;
     imports: string[];
     isExternal?: boolean;
+    type: 'file' | 'folder' | 'dependency';
 }
 
 interface Link {
@@ -36,9 +37,9 @@ function buildGraph(): { nodes: Node[], links: Link[] } {
     const nodeMap = new Map<string, Node>();
     const ig = ignore().add(fs.readFileSync(path.join(rootPath, '.gitignore'), 'utf8'));
 
-    function addNode(id: string, isExternal: boolean = false) {
+    function addNode(id: string, type: 'file' | 'folder' | 'dependency', isExternal: boolean = false) {
         if (!nodeMap.has(id)) {
-            const node: Node = { id, imports: [], isExternal };
+            const node: Node = { id, imports: [], isExternal, type };
             nodeMap.set(id, node);
             nodes.push(node);
         }
@@ -57,15 +58,16 @@ function buildGraph(): { nodes: Node[], links: Link[] } {
 
             const stat = fs.statSync(filePath);
             if (stat.isDirectory()) {
+                addNode(relativePath, 'folder');
                 traverseDirectory(filePath);
             } else if (path.extname(file) === '.ts' || path.extname(file) === '.js') {
                 const content = fs.readFileSync(filePath, 'utf8');
                 const imports = parseImports(content);
-                const node = addNode(relativePath);
+                const node = addNode(relativePath, 'file');
                 node.imports = imports;
 
                 for (const imp of imports) {
-                    addNode(imp, true);
+                    addNode(imp, 'dependency', true);
                     links.push({ source: relativePath, target: imp });
                 }
             }
@@ -73,6 +75,16 @@ function buildGraph(): { nodes: Node[], links: Link[] } {
     }
 
     traverseDirectory(rootPath);
+
+    // Add dependencies from package.json
+    const packageJsonPath = path.join(rootPath, 'package.json');
+    if (fs.existsSync(packageJsonPath)) {
+        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+        const dependencies = Object.keys(packageJson.dependencies || {});
+        dependencies.forEach(dep => {
+            addNode(dep, 'dependency', true);
+        });
+    }
 
     // Remove orphan nodes
     const connectedNodes = new Set(links.flatMap(link => [link.source, link.target]));
@@ -121,9 +133,22 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                 body { margin: 0; padding: 0; overflow: hidden; }
                 #graph { width: 100vw; height: 100vh; }
                 #error { color: red; font-size: 18px; margin: 20px; }
+                #controls { position: absolute; top: 10px; left: 10px; z-index: 1000; }
+                #colorButton { margin-bottom: 10px; }
             </style>
         </head>
         <body>
+            <div id="controls">
+                <button id="colorButton">Toggle Background</button>
+                <div>
+                    <label for="centerForce">Center Force</label>
+                    <input type="range" id="centerForce" min="0" max="2" step="0.1" value="1">
+                </div>
+                <div>
+                    <label for="repelForce">Repel Force</label>
+                    <input type="range" id="repelForce" min="-2000" max="0" step="100" value="-300">
+                </div>
+            </div>
             <div id="error"></div>
             <div id="graph"></div>
             <script>
@@ -132,6 +157,12 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                         document.getElementById('error').textContent = message;
                         vscode.postMessage({ command: 'alert', text: message });
                     }
+
+                    let isTransparent = false;
+                    document.getElementById('colorButton').addEventListener('click', () => {
+                        isTransparent = !isTransparent;
+                        document.body.style.backgroundColor = isTransparent ? 'transparent' : 'white';
+                    });
 
                     try {
                         const graph = ${JSON.stringify(graph)};
@@ -177,7 +208,7 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                             .data(graph.nodes)
                             .join("circle")
                             .attr("r", 5)
-                            .attr("fill", d => d.isExternal ? "#ff7f0e" : "#69b3a2")
+                            .attr("fill", d => d.type === 'dependency' ? "#ff7f0e" : d.type === 'file' ? "#69b3a2" : "#1f77b4")
                             .call(drag(simulation));
 
                         node.append("title")
@@ -235,6 +266,18 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                                 .on("drag", dragged)
                                 .on("end", dragended);
                         }
+
+                        const centerForceInput = document.getElementById('centerForce');
+                        centerForceInput.addEventListener('input', () => {
+                            simulation.force('center', d3.forceCenter(width / 2, height / 2).strength(centerForceInput.value));
+                            simulation.alpha(1).restart();
+                        });
+
+                        const repelForceInput = document.getElementById('repelForce');
+                        repelForceInput.addEventListener('input', () => {
+                            simulation.force('charge', d3.forceManyBody().strength(repelForceInput.value));
+                            simulation.alpha(1).restart();
+                        });
 
                         console.log('Script completed successfully');
                     } catch (error) {
