@@ -47,35 +47,41 @@ function buildGraph(): { nodes: Node[], links: Link[] } {
         return nodeMap.get(id)!;
     }
 
-    function traverseDirectory(dir: string) {
-        const files = fs.readdirSync(dir);
-        for (const file of files) {
-            const filePath = path.join(dir, file);
-            const relativePath = path.relative(rootPath, filePath);
+function traverseDirectory(dir: string) {
+    const files = fs.readdirSync(dir);
+    for (const file of files) {
+        if (file.startsWith('.')) {
+            // Skip files and directories starting with a dot
+            continue;
+        }
 
-            if (ig.ignores(relativePath) || file === 'node_modules') {
-                continue;
-            }
+        const filePath = path.join(dir, file);
+        const relativePath = path.relative(rootPath, filePath);
 
-            const stat = fs.statSync(filePath);
-            if (stat.isDirectory()) {
-                addNode(relativePath, 'folder');
-                traverseDirectory(filePath);
-            } else if (path.extname(file) === '.ts' || path.extname(file) === '.js') {
-                const content = fs.readFileSync(filePath, 'utf8');
-                const imports = parseImports(content);
-                const node = addNode(relativePath, 'file');
-                node.imports = imports;
+        if (ig.ignores(relativePath) || file === 'node_modules') {
+            continue;
+        }
 
-                for (const imp of imports) {
-                    const targetNode = addNode(imp, 'dependency', true);
-                    links.push({ source: relativePath, target: imp });
-                    node.linkCount++;
-                    targetNode.linkCount++;
-                }
+        const stat = fs.statSync(filePath);
+        if (stat.isDirectory()) {
+            addNode(relativePath, 'folder');
+            traverseDirectory(filePath);
+        } else if (path.extname(file) === '.ts' || path.extname(file) === '.js') {
+            const content = fs.readFileSync(filePath, 'utf8');
+            const imports = parseImports(content);
+            const node = addNode(relativePath, 'file');
+            node.imports = imports;
+
+            for (const imp of imports) {
+                const targetNode = addNode(imp, 'dependency', true);
+                links.push({ source: relativePath, target: imp });
+                node.linkCount++;
+                targetNode.linkCount++;
             }
         }
     }
+}
+
 
     traverseDirectory(rootPath);
 
