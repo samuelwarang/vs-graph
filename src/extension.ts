@@ -1,218 +1,249 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import ts from 'typescript';
 import ignore from 'ignore';
 
-interface FileNode {
-	id: string;
-	label: string;
-	imports: string[];
+interface Node {
+    id: string;
+    imports: string[];
+    isExternal?: boolean;
 }
 
-class FileGraph {
-	private nodes: Map<string, FileNode> = new Map();
-
-	addNode(filePath: string, imports: string[]) {
-		const id = filePath;
-		const label = path.basename(filePath);
-		this.nodes.set(id, { id, label, imports });
-	}
-
-	getNodes(): FileNode[] {
-		return Array.from(this.nodes.values());
-	}
-}
-
-function parseImports(filePath: string): string[] {
-	const content = fs.readFileSync(filePath, 'utf-8');
-	const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
-	const imports: string[] = [];
-
-	function visit(node: ts.Node) {
-		if (ts.isImportDeclaration(node)) {
-			const importPath = (node.moduleSpecifier as ts.StringLiteral).text;
-			imports.push(importPath);
-		}
-		ts.forEachChild(node, visit);
-	}
-
-	visit(sourceFile);
-	return imports;
-}
-
-function buildFileGraph(rootPath: string): FileGraph {
-	const graph = new FileGraph();
-	const ig = ignore();
-
-	// Read .gitignore file
-	const gitignorePath = path.join(rootPath, '.gitignore');
-	if (fs.existsSync(gitignorePath)) {
-		const gitignoreContent = fs.readFileSync(gitignorePath, 'utf-8');
-		ig.add(gitignoreContent);
-	}
-
-	// Always ignore node_modules
-	ig.add('node_modules');
-
-	function traverseDirectory(dirPath: string) {
-		const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-
-		for (const entry of entries) {
-			const fullPath = path.join(dirPath, entry.name);
-			const relativePath = path.relative(rootPath, fullPath);
-
-			// Check if the file/directory should be ignored
-			if (ig.ignores(relativePath)) {
-				continue;
-			}
-
-			if (entry.isDirectory()) {
-				traverseDirectory(fullPath);
-			} else if (entry.isFile() && /\.(ts|js|tsx|jsx)$/.test(entry.name)) {
-				const imports = parseImports(fullPath);
-				graph.addNode(fullPath, imports);
-			}
-		}
-	}
-
-	traverseDirectory(rootPath);
-	return graph;
+interface Link {
+    source: string;
+    target: string;
 }
 
 export function activate(context: vscode.ExtensionContext) {
-	context.subscriptions.push(vscode.commands.registerCommand('vs-graph.showFileGraph', () => {
-		const rootPath = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
-		if (!rootPath) {
-			vscode.window.showErrorMessage('No workspace folder found');
-			return;
-		}
+    let disposable = vscode.commands.registerCommand('vs-graph.showFileGraph', () => {
+        const graph = buildGraph();
+        showGraphView(context, graph);
+    });
 
-		const graph = buildFileGraph(rootPath);
-		const data = JSON.stringify(graph.getNodes().map(node => ({
-			id: node.id,
-			label: node.label,
-			imports: node.imports
-		})));
-
-		const panel = vscode.window.createWebviewPanel('fileGraph', 'File Graph', vscode.ViewColumn.One, {
-			enableScripts: true
-		});
-
-		panel.webview.html = getWebviewContent(context, data);
-	}));
+    context.subscriptions.push(disposable);
 }
 
-function getWebviewContent(context: vscode.ExtensionContext, data: string): string {
-	const d3Path = vscode.Uri.file(path.join(context.extensionPath, 'media', 'd3.min.js')).with({ scheme: 'vscode-resource' });
+function buildGraph(): { nodes: Node[], links: Link[] } {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) {
+        vscode.window.showErrorMessage('No workspace folder open');
+        return { nodes: [], links: [] };
+    }
 
-	return `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>File Graph</title>
-    <script src="${d3Path}"></script>
-    <style>
-        body { margin: 0; }
-        svg { width: 100vw; height: 100vh; }
-    </style>
-</head>
-<body>
-    <svg></svg>
-    <script>
-        console.log("Data received:", ${data});
-        const data = ${data};
+    const rootPath = workspaceFolders[0].uri.fsPath;
+    const nodes: Node[] = [];
+    const links: Link[] = [];
+    const nodeMap = new Map<string, Node>();
+    const ig = ignore().add(fs.readFileSync(path.join(rootPath, '.gitignore'), 'utf8'));
 
-        if (!data || data.length === 0) {
-            console.error("No data available for rendering the graph.");
-            return;
+    function addNode(id: string, isExternal: boolean = false) {
+        if (!nodeMap.has(id)) {
+            const node: Node = { id, imports: [], isExternal };
+            nodeMap.set(id, node);
+            nodes.push(node);
         }
+        return nodeMap.get(id)!;
+    }
 
-        const nodes = data.map(file => ({ id: file.id, label: file.label }));
-        const links = data.flatMap(file => file.imports.map(target => ({
-            source: file.id,
-            target
-        })));
+    function traverseDirectory(dir: string) {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+            const filePath = path.join(dir, file);
+            const relativePath = path.relative(rootPath, filePath);
 
-        const svg = d3.select("svg");
-        const width = window.innerWidth;
-        const height = window.innerHeight;
-
-        const simulation = d3.forceSimulation(nodes)
-            .force("link", d3.forceLink(links).id(d => d.id).distance(100))
-            .force("charge", d3.forceManyBody().strength(-200))
-            .force("center", d3.forceCenter(width / 2, height / 2));
-
-        const link = svg.append("g")
-            .attr("class", "links")
-            .selectAll("line")
-            .data(links)
-            .enter().append("line")
-            .attr("stroke", "#aaa");
-
-        const node = svg.append("g")
-            .attr("class", "nodes")
-            .selectAll("circle")
-            .data(nodes)
-            .enter().append("circle")
-            .attr("r", 5)
-            .attr("fill", "#69b3a2")
-            .call(drag(simulation));
-
-        const label = svg.append("g")
-            .attr("class", "labels")
-            .selectAll("text")
-            .data(nodes)
-            .enter().append("text")
-            .text(d => d.label)
-            .attr("font-size", "10px")
-            .attr("fill", "#000");
-
-        simulation.on("tick", () => {
-            link
-                .attr("x1", d => d.source.x)
-                .attr("y1", d => d.source.y)
-                .attr("x2", d => d.target.x)
-                .attr("y2", d => d.target.y);
-
-            node
-                .attr("cx", d => d.x)
-                .attr("cy", d => d.y);
-
-            label
-                .attr("x", d => d.x + 10)
-                .attr("y", d => d.y + 5);
-        });
-
-        function drag(simulation) {
-            function dragstarted(event) {
-                if (!event.active) simulation.alphaTarget(0.3).restart();
-                event.subject.fx = event.subject.x;
-                event.subject.fy = event.subject.y;
+            if (ig.ignores(relativePath) || file === 'node_modules') {
+                continue;
             }
 
-            function dragged(event) {
-                event.subject.fx = event.x;
-                event.subject.fy = event.y;
-            }
+            const stat = fs.statSync(filePath);
+            if (stat.isDirectory()) {
+                traverseDirectory(filePath);
+            } else if (path.extname(file) === '.ts' || path.extname(file) === '.js') {
+                const content = fs.readFileSync(filePath, 'utf8');
+                const imports = parseImports(content);
+                const node = addNode(relativePath);
+                node.imports = imports;
 
-            function dragended(event) {
-                if (!event.active) simulation.alphaTarget(0);
-                event.subject.fx = null;
-                event.subject.fy = null;
+                for (const imp of imports) {
+                    addNode(imp, true);
+                    links.push({ source: relativePath, target: imp });
+                }
             }
-
-            return d3.drag()
-                .on("start", dragstarted)
-                .on("drag", dragged)
-                .on("end", dragended);
         }
-    </script>
-</body>
-</html>`;
+    }
 
+    traverseDirectory(rootPath);
 
+    // Remove orphan nodes
+    const connectedNodes = new Set(links.flatMap(link => [link.source, link.target]));
+    return {
+        nodes: nodes.filter(node => connectedNodes.has(node.id)),
+        links
+    };
+}
 
+function parseImports(content: string): string[] {
+    const importRegex = /import\s+.*?from\s+['"](.+?)['"]/g;
+    const imports: string[] = [];
+    let match;
+    while ((match = importRegex.exec(content)) !== null) {
+        imports.push(match[1]);
+    }
+    return imports;
+}
+
+function showGraphView(context: vscode.ExtensionContext, graph: { nodes: Node[], links: Link[] }) {
+    const panel = vscode.window.createWebviewPanel(
+        'importExportGraph',
+        'Import/Export Graph',
+        vscode.ViewColumn.One,
+        {
+            enableScripts: true
+        }
+    );
+
+    panel.webview.html = getWebviewContent(context, graph, panel);
+}
+
+function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Node[], links: Link[] }, panel: vscode.WebviewPanel): string {
+    const d3Path = vscode.Uri.joinPath(context.extensionUri, 'node_modules', 'd3', 'dist', 'd3.min.js');
+    const d3Uri = panel.webview.asWebviewUri(d3Path);
+
+    return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Import/Export Graph</title>
+            <script src="${d3Uri}"></script>
+            <style>
+                body { margin: 0; padding: 0; overflow: hidden; }
+                #graph { width: 100vw; height: 100vh; }
+                #error { color: red; font-size: 18px; margin: 20px; }
+            </style>
+        </head>
+        <body>
+            <div id="error"></div>
+            <div id="graph"></div>
+            <script>
+                (function() {
+                    function showError(message) {
+                        document.getElementById('error').textContent = message;
+                        vscode.postMessage({ command: 'alert', text: message });
+                    }
+
+                    try {
+                        const graph = ${JSON.stringify(graph)};
+                        console.log('Graph data:', graph);
+                        
+                        if (!graph || !graph.nodes || !graph.links) {
+                            throw new Error('Invalid graph data');
+                        }
+
+                        if (graph.nodes.length === 0) {
+                            showError('No nodes found in the graph. The project might be empty or there might be an issue with file parsing.');
+                            return;
+                        }
+
+                        const width = window.innerWidth;
+                        const height = window.innerHeight;
+
+                        const svg = d3.select("#graph")
+                            .append("svg")
+                            .attr("width", width)
+                            .attr("height", height);
+
+                        console.log('SVG created');
+
+                        const simulation = d3.forceSimulation(graph.nodes)
+                            .force("link", d3.forceLink(graph.links).id(d => d.id))
+                            .force("charge", d3.forceManyBody().strength(-300))
+                            .force("center", d3.forceCenter(width / 2, height / 2));
+
+                        console.log('Simulation created');
+
+                        const link = svg.append("g")
+                            .attr("stroke", "#999")
+                            .attr("stroke-opacity", 0.6)
+                            .selectAll("line")
+                            .data(graph.links)
+                            .join("line");
+
+                        const node = svg.append("g")
+                            .attr("stroke", "#fff")
+                            .attr("stroke-width", 1.5)
+                            .selectAll("circle")
+                            .data(graph.nodes)
+                            .join("circle")
+                            .attr("r", 5)
+                            .attr("fill", d => d.isExternal ? "#ff7f0e" : "#69b3a2")
+                            .call(drag(simulation));
+
+                        node.append("title")
+                            .text(d => d.id);
+
+                        console.log('Nodes and links created');
+
+                        const labels = svg.append("g")
+                            .attr("class", "labels")
+                            .selectAll("text")
+                            .data(graph.nodes)
+                            .enter().append("text")
+                            .attr("dx", 12)
+                            .attr("dy", ".35em")
+                            .text(d => d.id);
+
+                        simulation.on("tick", () => {
+                            link
+                                .attr("x1", d => d.source.x)
+                                .attr("y1", d => d.source.y)
+                                .attr("x2", d => d.target.x)
+                                .attr("y2", d => d.target.y);
+
+                            node
+                                .attr("cx", d => d.x)
+                                .attr("cy", d => d.y);
+
+                            labels
+                                .attr("x", d => d.x)
+                                .attr("y", d => d.y);
+                        });
+
+                        console.log('Tick function set');
+
+                        function drag(simulation) {
+                            function dragstarted(event) {
+                                if (!event.active) simulation.alphaTarget(0.3).restart();
+                                event.subject.fx = event.subject.x;
+                                event.subject.fy = event.subject.y;
+                            }
+                            
+                            function dragged(event) {
+                                event.subject.fx = event.x;
+                                event.subject.fy = event.y;
+                            }
+                            
+                            function dragended(event) {
+                                if (!event.active) simulation.alphaTarget(0);
+                                event.subject.fx = null;
+                                event.subject.fy = null;
+                            }
+                            
+                            return d3.drag()
+                                .on("start", dragstarted)
+                                .on("drag", dragged)
+                                .on("end", dragended);
+                        }
+
+                        console.log('Script completed successfully');
+                    } catch (error) {
+                        console.error('Error:', error);
+                        showError('An error occurred: ' + error.message);
+                    }
+                })();
+            </script>
+        </body>
+        </html>
+    `;
 }
