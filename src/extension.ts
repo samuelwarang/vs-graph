@@ -8,6 +8,7 @@ interface Node {
     imports: string[];
     isExternal?: boolean;
     type: 'file' | 'folder' | 'dependency';
+    linkCount: number;
 }
 
 interface Link {
@@ -39,7 +40,7 @@ function buildGraph(): { nodes: Node[], links: Link[] } {
 
     function addNode(id: string, type: 'file' | 'folder' | 'dependency', isExternal: boolean = false) {
         if (!nodeMap.has(id)) {
-            const node: Node = { id, imports: [], isExternal, type };
+            const node: Node = { id, imports: [], isExternal, type, linkCount: 0 };
             nodeMap.set(id, node);
             nodes.push(node);
         }
@@ -67,8 +68,10 @@ function buildGraph(): { nodes: Node[], links: Link[] } {
                 node.imports = imports;
 
                 for (const imp of imports) {
-                    addNode(imp, 'dependency', true);
+                    const targetNode = addNode(imp, 'dependency', true);
                     links.push({ source: relativePath, target: imp });
+                    node.linkCount++;
+                    targetNode.linkCount++;
                 }
             }
         }
@@ -86,12 +89,7 @@ function buildGraph(): { nodes: Node[], links: Link[] } {
         });
     }
 
-    // Remove orphan nodes
-    const connectedNodes = new Set(links.flatMap(link => [link.source, link.target]));
-    return {
-        nodes: nodes.filter(node => connectedNodes.has(node.id)),
-        links
-    };
+    return { nodes, links };
 }
 
 function parseImports(content: string): string[] {
@@ -148,6 +146,10 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                     <label for="repelForce">Repel Force</label>
                     <input type="range" id="repelForce" min="-2000" max="0" step="100" value="-300">
                 </div>
+                <div>
+                    <label for="nodeSize">Node Size</label>
+                    <input type="range" id="nodeSize" min="1" max="20" step="1" value="5">
+                </div>
             </div>
             <div id="error"></div>
             <div id="graph"></div>
@@ -183,14 +185,21 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                         const svg = d3.select("#graph")
                             .append("svg")
                             .attr("width", width)
-                            .attr("height", height);
+                            .attr("height", height)
+                            .call(d3.zoom().on("zoom", (event) => {
+                                svg.attr("transform", event.transform);
+                                updateOpacity(event.transform.k);
+                            }))
+                            .append("g");
 
                         console.log('SVG created');
+
+                        const centerForceStrength = 0.05;
 
                         const simulation = d3.forceSimulation(graph.nodes)
                             .force("link", d3.forceLink(graph.links).id(d => d.id))
                             .force("charge", d3.forceManyBody().strength(-300))
-                            .force("center", d3.forceCenter(width / 2, height / 2));
+                            .force("center", d3.forceCenter(width / 2, height / 2).strength(centerForceStrength));
 
                         console.log('Simulation created');
 
@@ -207,7 +216,7 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                             .selectAll("circle")
                             .data(graph.nodes)
                             .join("circle")
-                            .attr("r", 5)
+                            .attr("r", d => 5 + d.linkCount) // Increase size based on link count
                             .attr("fill", d => d.type === 'dependency' ? "#ff7f0e" : d.type === 'file' ? "#69b3a2" : "#1f77b4")
                             .call(drag(simulation));
 
@@ -240,8 +249,6 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                                 .attr("x", d => d.x)
                                 .attr("y", d => d.y);
                         });
-
-                        console.log('Tick function set');
 
                         function drag(simulation) {
                             function dragstarted(event) {
@@ -278,6 +285,16 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                             simulation.force('charge', d3.forceManyBody().strength(repelForceInput.value));
                             simulation.alpha(1).restart();
                         });
+
+                        const nodeSizeInput = document.getElementById('nodeSize');
+                        nodeSizeInput.addEventListener('input', () => {
+                            node.attr("r", d => parseInt(nodeSizeInput.value) + d.linkCount);
+                            simulation.alpha(1).restart();
+                        });
+
+                        function updateOpacity(scale) {
+                            labels.style("opacity", d => scale < 0.5 ? 0 : 1 - ((0.5 - scale) * 2));
+                        }
 
                         console.log('Script completed successfully');
                     } catch (error) {
