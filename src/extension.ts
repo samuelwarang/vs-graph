@@ -150,7 +150,7 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                 </div>
                 <div>
                     <label for="repelForce">Repel Force</label>
-                    <input type="range" id="repelForce" min="-2000" max="0" step="100" value="-300">
+                    <input type="range" id="repelForce" min="-2000" max="0" step="10" value="-300">
                 </div>
                 <div>
                     <label for="nodeSize">Node Size</label>
@@ -200,12 +200,18 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
 
                         console.log('SVG created');
 
-                        const centerForceStrength = 0.05;
+                        // const centerForceStrength = 0.05;
+
+                        // const simulation = d3.forceSimulation(graph.nodes)
+                        //     .force("link", d3.forceLink(graph.links).id(d => d.id))
+                        //     .force("charge", d3.forceManyBody().strength(-300))
+                        //     .force("center", d3.forceCenter(width / 2, height / 2).strength(centerForceStrength));
 
                         const simulation = d3.forceSimulation(graph.nodes)
                             .force("link", d3.forceLink(graph.links).id(d => d.id))
-                            .force("charge", d3.forceManyBody().strength(-300))
-                            .force("center", d3.forceCenter(width / 2, height / 2).strength(centerForceStrength));
+                            .force("charge", d3.forceManyBody())
+                            .force("x", d3.forceX())
+                            .force("y", d3.forceY());
 
                         console.log('Simulation created');
 
@@ -299,7 +305,7 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                         });
 
                         function updateOpacity(scale) {
-                            labels.style("opacity", d => scale < 0.5 ? 0 : 1 - ((0.5 - scale) * 2));
+                            labels.style("opacity", d => scale < 1.5 ? 0 : 1 - ((0.5 - scale) * 2));
                         }
 
                         console.log('Script completed successfully');
