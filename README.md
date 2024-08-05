@@ -1,71 +1,64 @@
-# vs-graph README
+# VS Graph
 
-This is the README for your extension "vs-graph". After writing up a brief description, we recommend including the following sections.
+VS Graph is a Visual Studio Code extension that generates and visualizes a graph of your project's file structure and import relationships. This extension helps you understand the architecture and dependencies of your project at a glance.
+
+![image](https://github.com/user-attachments/assets/6e9db2a3-5dd0-4b32-b2b1-97ce52c5e9d7)
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- Parses your project structure and creates nodes for each file and folder
+- Analyzes imports in JavaScript and TypeScript files (.js, .ts, .jsx, .tsx)
+- Generates a interactive graph visualization of your project structure
+- Displays files, folders, and dependencies as different node types
+- Shows import relationships as links between nodes
+- Provides an interactive graph with zoom and pan capabilities
+- Allows customization of graph layout and appearance
 
-For example if there is an image subfolder under your extension project workspace:
+## Installation
 
-\!\[feature X\]\(images/feature-x.png\)
+1. Open Visual Studio Code
+2. Go to the Extensions view (Ctrl+Shift+X or Cmd+Shift+X)
+3. Search for "VS Graph"
+4. Click Install
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+Alternatively, you can download the VSIX file from the [releases page](https://github.com/yourusername/vs-graph/releases) and install it manually.
 
-## Requirements
+## Usage
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+1. Open a project folder in VS Code
+2. Open the Command Palette (Ctrl+Shift+P or Cmd+Shift+P)
+3. Type "Show File Graph" and select the command
+4. The graph visualization will open in a new tab
 
-## Extension Settings
+## Graph Interaction
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+- Zoom: Use the mouse wheel or trackpad gestures
+- Pan: Click and drag on the background
+- Move Nodes: Click and drag individual nodes
+- View Node Details: Hover over a node to see its full path
 
-For example:
+## Customization
 
-This extension contributes the following settings:
+You can customize the graph appearance and behavior using the controls in the top-left corner of the graph view:
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+- Toggle Background: Switch between a white background and a transparent background
+- Center Force: Adjust how strongly nodes are pulled towards the center
+- Repel Force: Change how strongly nodes repel each other
+- Node Size: Modify the base size of the nodes
 
-## Known Issues
+## Contributing
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-## Release Notes
+## License
 
-Users appreciate release notes as you update your extension.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-### 1.0.0
+## Acknowledgments
 
-Initial release of ...
+- [D3.js](https://d3js.org/) for the graph visualization
+- [ignore](https://github.com/kaelzhang/node-ignore) for .gitignore parsing
 
-### 1.0.1
+## Support
 
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+If you encounter any issues or have feature requests, please file an issue on the [GitHub repository](https://github.com/yourusername/vs-graph/issues).
