@@ -47,40 +47,49 @@ function buildGraph(): { nodes: Node[], links: Link[] } {
         return nodeMap.get(id)!;
     }
 
-function traverseDirectory(dir: string) {
-    const files = fs.readdirSync(dir);
-    for (const file of files) {
-        if (file.startsWith('.')) {
-            // Skip files and directories starting with a dot
-            continue;
-        }
+    function traverseDirectory(dir: string) {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+            if (file.startsWith('.')) {
+                continue;
+            }
 
-        const filePath = path.join(dir, file);
-        const relativePath = path.relative(rootPath, filePath);
+            const filePath = path.join(dir, file);
+            const relativePath = path.relative(rootPath, filePath);
 
-        if (ig.ignores(relativePath) || file === 'node_modules') {
-            continue;
-        }
+            if (ig.ignores(relativePath) || file === 'node_modules') {
+                continue;
+            }
 
-        const stat = fs.statSync(filePath);
-        if (stat.isDirectory()) {
-            addNode(relativePath, 'folder');
-            traverseDirectory(filePath);
-        } else if (path.extname(file) === '.ts' || path.extname(file) === '.js') {
-            const content = fs.readFileSync(filePath, 'utf8');
-            const imports = parseImports(content);
-            const node = addNode(relativePath, 'file');
-            node.imports = imports;
+            const stat = fs.statSync(filePath);
+            if (stat.isDirectory()) {
+                addNode(relativePath, 'folder');
+                traverseDirectory(filePath);
+            } else if (['.ts', '.js', '.jsx', '.tsx'].includes(path.extname(file))) {
+                const content = fs.readFileSync(filePath, 'utf8');
+                const imports = parseImports(content);
+                const node = addNode(relativePath, 'file');
+                node.imports = imports;
 
-            for (const imp of imports) {
-                const targetNode = addNode(imp, 'dependency', true);
-                links.push({ source: relativePath, target: imp });
-                node.linkCount++;
-                targetNode.linkCount++;
+                for (const imp of imports) {
+                    let resolvedImport = resolveImport(imp, filePath);
+                    const targetNode = addNode(resolvedImport, 'dependency', !resolvedImport.startsWith(rootPath));
+                    links.push({ source: relativePath, target: resolvedImport });
+                    node.linkCount++;
+                    targetNode.linkCount++;
+                }
             }
         }
     }
-}
+
+    function resolveImport(imp: string, currentFilePath: string): string {
+        if (imp.startsWith('.')) {
+            const resolvedPath = path.resolve(path.dirname(currentFilePath), imp);
+            const relativePath = path.relative(rootPath, resolvedPath);
+            return relativePath;
+        }
+        return imp;
+    }
 
 
     traverseDirectory(rootPath);
@@ -100,9 +109,13 @@ function traverseDirectory(dir: string) {
 
 function parseImports(content: string): string[] {
     const importRegex = /import\s+.*?from\s+['"](.+?)['"]/g;
+    const requireRegex = /(?:const|let|var)\s+.*?=\s*require\s*\(['"](.+?)['"]\)/g;
     const imports: string[] = [];
     let match;
     while ((match = importRegex.exec(content)) !== null) {
+        imports.push(match[1]);
+    }
+    while ((match = requireRegex.exec(content)) !== null) {
         imports.push(match[1]);
     }
     return imports;
@@ -211,7 +224,8 @@ function getWebviewContent(context: vscode.ExtensionContext, graph: { nodes: Nod
                             .force("link", d3.forceLink(graph.links).id(d => d.id))
                             .force("charge", d3.forceManyBody())
                             .force("x", d3.forceX())
-                            .force("y", d3.forceY());
+                            .force("y", d3.forceY())
+                            .force("center", d3.forceCenter(width / 2, height / 2))
 
                         console.log('Simulation created');
 
